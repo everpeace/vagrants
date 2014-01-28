@@ -1,0 +1,137 @@
+#!/bin/bash
+export LC_ALL=en_US.UTF-8
+VAGRANT=`which vagrant`
+ORIGIN=`pwd`
+VERBOSE=false
+INDENT='  '
+DEBUG=${VAGRANTS_DEBUG:-false}
+ALL=false
+
+function usage_exit {
+  cat <<USAGE
+USAGE:
+  vagrants [-h] [-v] -c (vagrant commands to be cascaded)
+  vagrants [-h] [-v] [dir_name] -c (vagrant commands to be cascaded)
+  vagrants [-h] [-v] [/dir_pattern/] -c (vagrant commands to be cascaded)
+
+OPTIONS:
+  -h       Print help.
+  -v       Verbose mode.
+
+EXAMPLES:
+Assume you have:
+  .
+  ├── teest1
+  │    └── Vagrantfile (let master[123] be defined.)
+  ├── test2
+  │    └── Vagrantfile (let slave[123] be defined.)
+  └── test3
+       └── Vagrantfile (let default be defined.)
+
+EXAMPLE1:
+  cascades vagrant command to all sub directory
+    $ vagrants -- up
+  is equivalent with
+    $ cd teest1 && vagrant up && cd .. \\
+      && cd test2 && vagrant up && cd ..\\
+      && cd test3 && vagrant up && cd ..
+
+EXAMPLE2:
+  cascades to specific directory name
+    $ vagrants test2 -- up /master[13]/
+  is equivalent with
+    $ cd test2 && vagrant up /master[13]/ && cd ..
+
+EXAMPLE3:
+  cascades to directories matched with directory pattern.
+    $ vagrants /t*st[12]/ -- up /[ms].*[13]/
+  is equivalent with
+    $ cd teest1 && vagrant up /[ms].*[13]/ && cd .. \\
+      && cd test2 && vagrant up /[ms].*[13]/ && cd ..
+
+INFO:
+  Author: Shingo Omura
+  Github: http://github.com/everpeace
+  Twitter: http://twitter.com/everpeace
+USAGE
+  exit 1
+};
+
+function do_vagrant_on {
+    local dir=$1
+    shift;
+    local commands=$*
+    if [[ -e $dir/Vagrantfile ]] ; then
+      out "[In $dir] "
+      cd $dir && $VAGRANT $commands 2>&1 | sed -e "s/^/$INDENT/"
+      out ""
+    else
+      verbose "[In $dir]"
+      verbose "  SKIPPED. no Vagrnatfile."
+    fi
+}
+function out { printf '%s\n' "$*" ;}
+function debug {
+  if $DEBUG ; then out "$*" ; fi
+}
+function verbose {
+  if $VERBOSE ; then out "$*" ; fi
+}
+
+while getopts "hvc" OPT
+do
+  case $OPT in
+    h)  debug "-h detected"
+        usage_exit
+        ;;
+    v)  debug "-v detected. set verbose mode"
+        VERBOSE=true
+        ;;
+    c)  debug "no specific directories. cascades to all subdirectories."
+        ALL=true
+        ;;
+  esac
+done
+shift $((OPTIND - 1))
+debug "remained commands: $*"
+
+if ! $ALL ; then
+  if [[ "$1" =~ /*/ ]] ; then
+    target=`echo "$1" | sed -e s/^\\\/// | sed -e s/\\\/$//`
+  else
+    target="$1"
+  fi
+  shift
+  if [[ ! "$1" =~ ^-c$ ]] ; then
+    usage_exit
+  else
+    shift
+  fi
+fi
+debug '$target='"${target:-ALL}"
+
+for dir in $(find . -type d)
+do
+  # eliminate the first "./"
+  _dir=`echo "$dir" | sed s/^\\.\\\///`
+  debug "visiging $dir, _dir is $_dir"
+  if $ALL ; then
+    if [[ ! $_dir =~ \.vagrant && ! $dir =~ /\. ]]; then
+      debug "any directory matches in ALL mode."
+      do_vagrant_on $dir $* && cd "$ORIGIN"
+    else
+      debug "  $dir ignored."
+    fi
+  else
+    if [[ ! $_dir =~ \.vagrant && ! $dir =~ /\. ]] ; then
+      if [[ $_dir =~ $target ]]; then
+        debug "  $_dir matches to $target".
+        do_vagrant_on $dir $* && cd "$ORIGIN"
+      else
+        debug "  $_dir unmatches to $target".
+      fi
+    else
+      debug "  $dir ignored."
+    fi
+  fi
+done
